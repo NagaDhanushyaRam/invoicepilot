@@ -1,5 +1,12 @@
 import logging
-from fastapi import FastAPI, Request
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+
+from app import paypal
 
 app = FastAPI(title="InvoicePilot")
 log = logging.getLogger("uvicorn.error")
@@ -12,6 +19,10 @@ def health():
 
 @app.post("/webhooks/paypal")
 async def paypal_webhook(request: Request):
-    body = await request.json()
-    log.info("PayPal webhook: %s id=%s", body.get("event_type"), body.get("id"))
+    event = await request.json()
+    ok = await run_in_threadpool(paypal.verify_webhook, request.headers, event)
+    if not ok:
+        log.warning("Rejected unverified webhook: %s", event.get("event_type"))
+        raise HTTPException(status_code=400, detail="invalid signature")
+    log.info("PayPal webhook verified: %s id=%s", event.get("event_type"), event.get("id"))
     return {"received": True}
