@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Duewise</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css">
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; color: #1a1a1a; }
+  h1 { margin-bottom: 4px; } .sub { color: #666; margin-top: 0; }
+  textarea, input { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; }
+  button { padding: 8px 14px; font: inherit; cursor: pointer; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 14px; margin: 14px 0; }
+  .row { display: grid; grid-template-columns: 3fr 1fr 1fr; gap: 6px; margin: 4px 0; }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #msg { margin: 8px 0; min-height: 1.4em; } #grid { height: 320px; } ul { padding-left: 18px; }
+  @media (max-width: 600px) { .fields { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Duewise</h1>
+<p class="sub">Paste a messy message. AI drafts the invoice. You approve. PayPal sends it. (Sandbox: test data only.)</p>
+
+<div class="card">
+  <textarea id="message" rows="3" placeholder="e.g. Bill Maria Lopez (maria@example.com) for 3 hours of logo design at $60/hr, due in two weeks"></textarea>
+  <p><button id="extract">Draft invoice with AI</button></p>
+  <div id="msg"></div>
+  <div id="review" hidden>
+    <div class="fields">
+      <label>Customer name<input id="name"></label>
+      <label>Customer email<input id="email"></label>
+      <label>Due date<input id="due" type="date"></label>
+      <label>Currency<input id="currency" value="USD"></label>
+    </div>
+    <label>Note<input id="note"></label>
+    <h4>Items (name, quantity, unit price)</h4>
+    <div id="items"></div>
+    <p><button id="add">+ Add item</button> <button id="approve">Approve and send via PayPal</button></p>
+  </div>
+</div>
+
+<h3>Invoices</h3>
+<div id="grid" class="ag-theme-quartz"></div>
+<h3>Live PayPal webhook events</h3>
+<ul id="events"></ul>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let items = [];
+const setMsg = (t) => { $("msg").textContent = t; };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : r.statusText);
+  return data;
+}
+const post = (path, obj) => api(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(obj)});
+
+function renderItems() {
+  $("items").innerHTML = items.map((it, i) => `
+    <div class="row">
+      <input data-i="${i}" data-k="name" value="${esc(it.name)}">
+      <input data-i="${i}" data-k="quantity" type="number" min="1" value="${esc(it.quantity)}">
+      <input data-i="${i}" data-k="unit_price" type="number" step="0.01" value="${esc(it.unit_price)}">
+    </div>`).join("");
+}
+$("items").oninput = (e) => {
+  const t = e.target;
+  items[t.dataset.i][t.dataset.k] = t.dataset.k === "name" ? t.value : Number(t.value);
+};
+$("add").onclick = () => { items.push({name: "", quantity: 1, unit_price: 0}); renderItems(); };
+
+$("extract").onclick = async () => {
+  setMsg("Asking the AI to draft the invoice...");
+  try {
+    const d = await post("/api/extract", {message: $("message").value});
+    $("name").value = d.customer_name || "";
+    $("email").value = d.customer_email || "";
+    $("due").value = d.due_date || "";
+    $("currency").value = d.currency || "USD";
+    $("note").value = d.note || "";
+    items = d.items;
+    renderItems();
+    $("review").hidden = false;
+    setMsg("Review and edit the fields, then approve. Missing fields are left blank for you to fill in.");
+  } catch (e) { setMsg("Error: " + e.message); }
+};
+
+$("approve").onclick = async () => {
+  const draft = {
+    customer_name: $("name").value || null,
+    customer_email: $("email").value || null,
+    currency: $("currency").value || "USD",
+    due_date: $("due").value || null,
+    items: items.filter(i => i.name),
+    note: $("note").value || null,
+  };
+  setMsg("Creating and sending the invoice...");
+  try {
+    const r = await post("/api/invoices", draft);
+    setMsg("Sent: " + r.id);
+    $("review").hidden = true;
+    refresh();
+  } catch (e) { setMsg("Error: " + e.message); }
+};
+
+const grid = agGrid.createGrid($("grid"), {
+  columnDefs: [
+    {field: "number", headerName: "#", width: 90},
+    {field: "recipient", flex: 2},
+    {field: "amount", valueFormatter: p => p.value == null ? "" : (p.data.currency || "") + " " + p.value.toFixed(2)},
+    {field: "due_date", headerName: "Due"},
+    {field: "status"},
+  ],
+  rowData: [],
+  defaultColDef: {sortable: true, filter: true, flex: 1},
+});
+
+async function refresh() {
+  const rows = await api("/api/invoices");
+  rows.sort((a, b) => String(b.number).localeCompare(String(a.number)));
+  grid.setGridOption("rowData", rows);
+  const ev = await api("/api/events");
+  $("events").innerHTML = ev.map(e => `<li>${esc(e.time)} ${esc(e.type)}</li>`).join("") || "<li>No events yet</li>";
+}
+refresh().catch(console.error);
+setInterval(() => refresh().catch(() => {}), 5000);
+</script>
+</body>
+</html>
