@@ -43,8 +43,13 @@ SYSTEM = (
 )
 
 REMINDER_SYSTEM = (
-    "You write short, polite payment reminder emails for a small business. "
+    "You write short payment reminder emails for a small business. "
     "Use only the facts provided. Do not invent fees, penalties, legal threats or deadlines. "
+    "Follow the requested tone exactly. 'friendly': warm and light, the invoice is not yet due. "
+    "'firm but polite': direct, say clearly that the invoice is overdue and ask for payment. "
+    "'urgent but professional': state how many days overdue it is, ask for payment right away, "
+    "and ask them to reply if there is a problem. "
+    "Never call an overdue reminder 'friendly'. "
     "Keep the body under 80 words, plain text, and sign off as 'Accounts team'."
 )
 

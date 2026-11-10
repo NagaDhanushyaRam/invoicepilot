@@ -12,16 +12,28 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import time
+from collections import defaultdict
+
 from app import llm, paypal, risk
 
 app = FastAPI(title="Duewise")
 log = logging.getLogger("uvicorn.error")
 EVENTS = deque(maxlen=20)  # recent verified PayPal events, kept in memory
 CLOCK = {"offset": 0}
+HITS = defaultdict(list)
 INDEX = Path(__file__).parent / "static" / "index.html"
 
 def today():
     return date.today() + timedelta(days=CLOCK["offset"])
+
+def rate_limit(request: Request, limit: int = 30, window: int = 3600):
+    ip = request.headers.get("x-forwarded-for", request.client.host).split(",")[0].strip()
+    now = time.time()
+    HITS[ip] = [t for t in HITS[ip] if now - t < window]
+    if len(HITS[ip]) >= limit:
+        raise HTTPException(429, "Demo limit reached. Please try again later.")
+    HITS[ip].append(now)
 class Message(BaseModel):
     message: str
 
@@ -49,7 +61,8 @@ async def paypal_webhook(request: Request):
 
 
 @app.post("/api/extract")
-async def api_extract(body: Message):
+async def api_extract(body: Message, request: Request):
+    rate_limit(request)
     if len(body.message) > 2000:
         raise HTTPException(413, "Message too long")
     try:
@@ -58,6 +71,20 @@ async def api_extract(body: Message):
         log.exception("extract failed")
         raise HTTPException(503, "The AI service is busy. Please try again in a moment.")
     return draft.model_dump()
+
+@app.post("/api/invoices")
+async def api_create(draft: llm.InvoiceDraft, request: Request):
+    rate_limit(request)
+    if not draft.customer_email or not draft.items:
+        raise HTTPException(422, "A customer email and at least one item are required")
+    if any(i.quantity < 1 or i.unit_price <= 0 for i in draft.items):
+        raise HTTPException(422, "Every item needs a quantity of at least 1 and a price above 0")
+    try:
+        inv_id = await run_in_threadpool(paypal.create_and_send, draft.model_dump())
+    except httpx.HTTPStatusError as e:
+        log.error("PayPal error: %s", e.response.text[:500])
+        raise HTTPException(502, f"PayPal rejected the invoice: {e.response.text[:200]}")
+    return {"id": inv_id}
 
 @app.get("/api/invoices")
 async def api_invoices():
@@ -104,7 +131,8 @@ def _find_open(inv_id: str):
 
 
 @app.post("/api/reminder/draft")
-async def api_reminder_draft(body: DraftReq):
+async def api_reminder_draft(body: DraftReq, request: Request):
+    rate_limit(request)
     row = await run_in_threadpool(_find_open, body.id)
     if not row:
         raise HTTPException(404, "Open invoice with a due date not found")
@@ -122,7 +150,8 @@ async def api_reminder_draft(body: DraftReq):
 
 
 @app.post("/api/reminder/send")
-async def api_reminder_send(body: SendReq):
+async def api_reminder_send(body: SendReq, request: Request):
+    rate_limit(request)
     if not body.subject.strip() or not body.body.strip() or len(body.subject) > 150 or len(body.body) > 1000:
         raise HTTPException(422, "Subject and message are required (subject max 150, message max 1000 characters)")
     try:
