@@ -41,6 +41,10 @@
   </div>
 </div>
 
+<p>Demo date: <b id="today">-</b>
+    <button id="ff">Fast-forward 7 days</button>
+    <button id="reset">Reset</button></p>
+
 <h3>Invoices</h3>
 <div id="grid" class="ag-theme-quartz"></div>
 <h3>Live PayPal webhook events</h3>
@@ -110,17 +114,25 @@ $("approve").onclick = async () => {
 
 const grid = agGrid.createGrid($("grid"), {
   columnDefs: [
-    {field: "number", headerName: "#", width: 90},
+    {field: "number", headerName: "#", width: 80},
     {field: "recipient", flex: 2},
     {field: "amount", valueFormatter: p => p.value == null ? "" : (p.data.currency || "") + " " + p.value.toFixed(2)},
     {field: "due_date", headerName: "Due"},
-    {field: "status"},
+    {headerName: "Status", valueGetter: p => p.data.overdue ? "OVERDUE" : p.data.status,
+     cellStyle: p => p.data.overdue ? {color: "#b00020", fontWeight: "600"} : null},
+    {field: "risk", headerName: "Late risk", valueFormatter: p => p.value == null ? "" : p.value + "%"},
+    {field: "reasons", headerName: "Why", flex: 3},
   ],
   rowData: [],
   defaultColDef: {sortable: true, filter: true, flex: 1},
 });
 
+async function loadClock() { $("today").textContent = (await api("/api/clock")).today; }
+$("ff").onclick = async () => { await api("/api/clock/advance?days=7", {method: "POST"}); await refresh(); };
+$("reset").onclick = async () => { await api("/api/clock/reset", {method: "POST"}); await refresh(); };
+
 async function refresh() {
+  await loadClock();
   const rows = await api("/api/invoices");
   rows.sort((a, b) => String(b.number).localeCompare(String(a.number)));
   grid.setGridOption("rowData", rows);
