@@ -90,3 +90,12 @@ def to_row(inv: dict) -> dict:
         "currency": amt.get("currency_code"),
         "due_date": (d.get("payment_term") or {}).get("due_date"),
     }
+    
+def send_reminder(inv_id: str, subject: str, note: str) -> None:
+    r = httpx.post(
+        f"{BASE}/v2/invoicing/invoices/{inv_id}/remind",
+        headers=_auth(),
+        json={"subject": subject, "note": note, "send_to_invoicer": True},
+        timeout=20,
+    )
+    r.raise_for_status()

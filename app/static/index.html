@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css">
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 16px; color: #1a1a1a; }
+  body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 16px; color: #1a1a1a; }
   h1 { margin-bottom: 4px; } .sub { color: #666; margin-top: 0; }
   textarea, input { width: 100%; box-sizing: border-box; padding: 8px; font: inherit; }
   button { padding: 8px 14px; font: inherit; cursor: pointer; }
@@ -47,6 +47,13 @@
 
 <h3>Invoices</h3>
 <div id="grid" class="ag-theme-quartz"></div>
+<div id="rem" class="card" hidden>
+  <h3>Reminder draft <small id="remTone"></small></h3>
+  <label>Subject<input id="remSubject"></label>
+  <label>Message<textarea id="remBody" rows="6"></textarea></label>
+  <p><button id="remSend">Approve and send reminder</button></p>
+  <div id="remMsg"></div>
+</div>
 <h3>Live PayPal webhook events</h3>
 <ul id="events"></ul>
 
@@ -121,7 +128,8 @@ const grid = agGrid.createGrid($("grid"), {
     {headerName: "Status", valueGetter: p => p.data.overdue ? "OVERDUE" : p.data.status,
      cellStyle: p => p.data.overdue ? {color: "#b00020", fontWeight: "600"} : null},
     {field: "risk", headerName: "Late risk", valueFormatter: p => p.value == null ? "" : p.value + "%"},
-    {field: "reasons", headerName: "Why", flex: 3},
+    {field: "reasons", headerName: "Why", flex: 3, minWidth: 220, wrapText: true, autoHeight: true},
+    {headerName: "", flex: 0, width: 160, cellRenderer: p => p.data.risk != null ? `<button class="rem" data-id="${esc(p.data.id)}">Draft reminder</button>` : ""},
   ],
   rowData: [],
   defaultColDef: {sortable: true, filter: true, flex: 1},
@@ -130,6 +138,27 @@ const grid = agGrid.createGrid($("grid"), {
 async function loadClock() { $("today").textContent = (await api("/api/clock")).today; }
 $("ff").onclick = async () => { await api("/api/clock/advance?days=7", {method: "POST"}); await refresh(); };
 $("reset").onclick = async () => { await api("/api/clock/reset", {method: "POST"}); await refresh(); };
+
+let remId = null;
+async function draftReminder(id) {
+  $("rem").hidden = false;
+  $("remMsg").textContent = "Drafting reminder with AI...";
+  try {
+    const d = await post("/api/reminder/draft", {id});
+    remId = id;
+    $("remSubject").value = d.subject;
+    $("remBody").value = d.body;
+    $("remTone").textContent = "(tone: " + d.tone + ")";
+    $("remMsg").textContent = "Edit if you like, then approve to send.";
+  } catch (e) { $("remMsg").textContent = "Error: " + e.message; }
+}
+$("grid").onclick = (e) => { const b = e.target.closest(".rem"); if (b) draftReminder(b.dataset.id); };
+$("remSend").onclick = async () => {
+  try {
+    await post("/api/reminder/send", {id: remId, subject: $("remSubject").value, body: $("remBody").value});
+    $("remMsg").textContent = "Reminder sent through PayPal.";
+  } catch (e) { $("remMsg").textContent = "Error: " + e.message; }
+};
 
 async function refresh() {
   await loadClock();

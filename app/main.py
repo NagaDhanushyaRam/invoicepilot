@@ -84,3 +84,50 @@ def reset_clock():
 @app.get("/api/events")
 def api_events():
     return list(EVENTS)
+
+class DraftReq(BaseModel):
+    id: str
+
+
+class SendReq(BaseModel):
+    id: str
+    subject: str
+    body: str
+
+
+def _find_open(inv_id: str):
+    rows = risk.enrich([paypal.to_row(i) for i in paypal.list_invoices()], today())
+    for r in rows:
+        if r["id"] == inv_id and r["risk"] is not None:
+            return r
+    return None
+
+
+@app.post("/api/reminder/draft")
+async def api_reminder_draft(body: DraftReq):
+    row = await run_in_threadpool(_find_open, body.id)
+    if not row:
+        raise HTTPException(404, "Open invoice with a due date not found")
+    days = (date.fromisoformat(row["due_date"]) - today()).days
+    tone = "friendly" if days >= 0 else ("firm but polite" if days >= -14 else "urgent but professional")
+    try:
+        r = await run_in_threadpool(
+            llm.draft_reminder, row["number"], row["recipient"], row["amount"],
+            row["currency"], row["due_date"], days, tone,
+        )
+    except Exception:
+        log.exception("reminder draft failed")
+        raise HTTPException(503, "The AI service is busy. Please try again in a moment.")
+    return {"subject": r.subject, "body": r.body, "tone": tone}
+
+
+@app.post("/api/reminder/send")
+async def api_reminder_send(body: SendReq):
+    if not body.subject.strip() or not body.body.strip() or len(body.subject) > 150 or len(body.body) > 1000:
+        raise HTTPException(422, "Subject and message are required (subject max 150, message max 1000 characters)")
+    try:
+        await run_in_threadpool(paypal.send_reminder, body.id, body.subject, body.body)
+    except httpx.HTTPStatusError as e:
+        log.error("PayPal reminder error: %s", e.response.text[:500])
+        raise HTTPException(502, f"PayPal rejected the reminder: {e.response.text[:200]}")
+    return {"sent": True}
