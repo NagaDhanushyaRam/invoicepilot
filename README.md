@@ -30,6 +30,12 @@ Built for the "Build What's Next with PayPal and AI" hackathon. **Sandbox and te
 - **scikit-learn logistic regression**: late-payment risk, with per-invoice reasons from the model's feature contributions. **It is trained on synthetic data generated in `app/risk.py`, not real customer data.**
 - **Claude** was used as a coding assistant during development.
 
+## Sponsor tools used
+
+- **AG Grid Community**: the invoice table, with sorting, filtering, a wrapped "why" column and a per-row reminder action.
+- **Render**: hosts the live demo and receives PayPal's webhooks.
+
+
 ## Run it locally
 
 Requires Python 3.11+.

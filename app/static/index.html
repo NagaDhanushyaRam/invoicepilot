@@ -162,11 +162,16 @@ $("remSend").onclick = async () => {
   } catch (e) { $("remMsg").textContent = "Error: " + e.message; }
 };
 
+let lastRows = "";
 async function refresh() {
   await loadClock();
   const rows = await api("/api/invoices");
   rows.sort((a, b) => String(b.number).localeCompare(String(a.number)));
-  grid.setGridOption("rowData", rows);
+  const sig = JSON.stringify(rows);
+  if (sig !== lastRows) {
+    lastRows = sig;
+    grid.setGridOption("rowData", rows);
+  }
   const ev = await api("/api/events");
   $("events").innerHTML = ev.map(e => `<li>${esc(e.time)} ${esc(e.type)}</li>`).join("") || "<li>No events yet</li>";
 }
